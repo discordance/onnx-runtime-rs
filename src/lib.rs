@@ -1,9 +1,12 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_camel_case_types)]
 #![allow(non_snake_case)]
+#![allow(dead_code)]
 #![feature(rustc_private)]
 
+
 extern crate rand;
+extern crate libc;
 
 use std::ffi::{CStr, CString};
 use std::time::Instant;
@@ -32,6 +35,27 @@ mod onnx_runtime {
         input_size: usize,
         output_size: usize,
         input_tensor: *mut OrtValue,
+    }
+
+    impl Drop for OnnxRuntimeApi {
+        // drop
+        fn drop(&mut self) { 
+            if let Some(api_ptr) = self.api {
+                unsafe {
+                    // release
+                    (*api_ptr).ReleaseValue.expect("c fn")(self.input_tensor);
+                    (*api_ptr).ReleaseSession.expect("c fn")(self.session);
+                    (*api_ptr).ReleaseSessionOptions.expect("c fn")(self.session_opts);
+                    (*api_ptr).ReleaseEnv.expect("c fn")(self.env);
+                    
+                    // oh yeah
+                    libc::free(self.input_names_arr as _);
+                    libc::free(self.output_names_arr as _);
+                    libc::free(self.input_dims_arr as _);
+                    libc::free(self.output_dims_arr as _);
+                }
+            }
+        }
     }
 
     impl OnnxRuntimeApi {
@@ -121,10 +145,7 @@ mod onnx_runtime {
                 std::mem::forget(out_dims);
 
                 // init input vec
-                self.input_vec = Vec::with_capacity(self.input_size);
-                for i in 0..self.input_size {
-                    self.input_vec.push(0.0); // zero init
-                }
+                self.input_vec = vec![0.0; self.input_size];
                 self.input_vec.shrink_to_fit();
 
                 unsafe {
@@ -192,6 +213,9 @@ mod onnx_runtime {
 
                     let results = std::slice::from_raw_parts(floatarr, self.output_size);
                     data_out.copy_from_slice(results);
+
+                    // release 
+                    (*api_ptr).ReleaseValue.expect("c fn")(out_tensor);
                 }
             }
         }
@@ -345,7 +369,6 @@ mod tests {
         // init
         let mut onnx_api = onnx_runtime::OnnxRuntimeApi::new();
         onnx_api.load_model("test_model/one.10.onnx");
-        // onnx_api.test_run();
         
         onnx_api.setup(vec![1, 16, 256, 2], vec![1, 16, 256, 2], vec!["import/IteratorGetNext:0"], vec!["import/conv2d_19/Sigmoid:0"]);
 
@@ -359,5 +382,7 @@ mod tests {
         let mut results: Vec<f32> = vec![0.0; 8192];
 
         onnx_api.run(&numbers[..], &mut results[..]);
+
+        drop(onnx_api);
     }
 }
