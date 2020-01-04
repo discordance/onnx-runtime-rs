@@ -14,7 +14,7 @@ use crate::rand::Rng;
 
 include!(concat!(env!("OUT_DIR"), "/bindings.rs"));
 
-mod onnx_runtime {
+pub mod api {
     use super::*;
 
     // simple wrapper as possible
@@ -30,6 +30,7 @@ mod onnx_runtime {
         session: *mut OrtSession,
         input_names_arr: *const *const i8,
         output_names_arr: *const *const i8,
+        outputs_num: usize,
         input_dims_arr: *const i64,
         output_dims_arr: *const i64,
         input_size: usize,
@@ -69,6 +70,7 @@ mod onnx_runtime {
                 session: unsafe { std::ptr::null_mut() },
                 input_names_arr: unsafe { std::ptr::null_mut() },
                 output_names_arr: unsafe { std::ptr::null_mut() },
+                outputs_num: 0,
                 input_dims_arr: unsafe { std::ptr::null_mut() },
                 output_dims_arr: unsafe { std::ptr::null_mut() },
                 input_size: 0,
@@ -89,7 +91,7 @@ mod onnx_runtime {
                 if let Some(api_ptr) = self.api {
                     // env
                     let res = (*api_ptr).CreateEnv.expect("c fn")(
-                        OrtLoggingLevel_ORT_LOGGING_LEVEL_VERBOSE,
+                        OrtLoggingLevel_ORT_LOGGING_LEVEL_ERROR,
                         CString::new("").unwrap().as_ptr(),
                         &mut self.env as *mut _ as *mut _,
                     );
@@ -125,6 +127,8 @@ mod onnx_runtime {
                 // setup names
                 self.input_names_arr = OnnxRuntimeApi::to_c_str_vec(&input_names[..]);
                 self.output_names_arr = OnnxRuntimeApi::to_c_str_vec(&output_names[..]);
+
+                self.outputs_num = output_names.len();
 
                 // setup dims
                 let mut in_dims = input_dims.clone();
@@ -193,10 +197,10 @@ mod onnx_runtime {
                     let res = (*api_ptr).Run.expect("c fn")(
                         self.session as *mut _,
                         std::ptr::null(),
-                        OnnxRuntimeApi::to_c_str_vec(&vec!["import/IteratorGetNext:0"][..]),
+                        self.input_names_arr,
                         &self.input_tensor as *const _ as *const _,
                         1,
-                        OnnxRuntimeApi::to_c_str_vec(&vec!["import/conv2d_19/Sigmoid:0"][..]),
+                        self.output_names_arr,
                         1,
                         &mut out_tensor as *mut _ as *mut _,
                     );
@@ -367,7 +371,7 @@ mod tests {
     #[test]
     fn test_env() {
         // init
-        let mut onnx_api = onnx_runtime::OnnxRuntimeApi::new();
+        let mut onnx_api = api::OnnxRuntimeApi::new();
         onnx_api.load_model("test_model/one.10.onnx");
         
         onnx_api.setup(vec![1, 16, 256, 2], vec![1, 16, 256, 2], vec!["import/IteratorGetNext:0"], vec!["import/conv2d_19/Sigmoid:0"]);
